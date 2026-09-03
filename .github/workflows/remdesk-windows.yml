@@ -235,6 +235,16 @@ jobs:
           python3 .\build.py --portable --flutter --skip-portable-pack --hwcodec ${{ matrix.job.build-args }}
           mv ./flutter/build/windows/${{ matrix.job.flutter-arch }}/runner/Release ./rustdesk
 
+          # Le fichier compile s'appelle rustdesk.exe (BINARY_NAME dans CMakeLists.txt,
+          # jamais touche). Mais install_me() (declenchee par le bouton "Installer")
+          # enregistre le service Windows pour lancer "<app_name>.exe" = RemDesk.exe,
+          # sans jamais renommer le fichier copie. Les deux noms ne correspondaient pas :
+          # le service pointait vers un fichier inexistant ("Le fichier specifie est
+          # introuvable"). Renommer ici, avant l'emballage, aligne le fichier reellement
+          # livre sur ce que RustDesk suppose partout ailleurs (raccourcis, taskkill,
+          # icone par defaut) — corrige a la source plutot que de patcher cette logique.
+          Rename-Item -Path .\rustdesk\rustdesk.exe -NewName RemDesk.exe
+
           # Download usbmmidd_v2.zip and extract it to ./rustdesk
           Invoke-WebRequest -Uri https://github.com/rustdesk-org/rdev/releases/download/usbmmidd_v2/usbmmidd_v2.zip -OutFile usbmmidd_v2.zip
           Expand-Archive usbmmidd_v2.zip -DestinationPath .
@@ -306,7 +316,7 @@ jobs:
           sed -i '/dpiAware/d' res/manifest.xml
           pushd ./libs/portable
           pip3 install -r requirements.txt
-          python3 ./generate.py -f ../../rustdesk/ -o . -e ../../rustdesk/rustdesk.exe
+          python3 ./generate.py -f ../../rustdesk/ -o . -e ../../rustdesk/RemDesk.exe
           popd
           mkdir -p ./SignOutput
           mv ./target/release/rustdesk-portable-packer.exe ./SignOutput/RemDesk-${{ env.VERSION }}.exe
