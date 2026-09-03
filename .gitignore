@@ -58,3 +58,7 @@ libsciter.dylib
 flutter/web/
 # libdrmtap is cloned at build time by build.py (not a submodule)
 /third_party/libdrmtap/
+
+# Logo Chekali Automation (RemDesk) : le *png ci-dessus l'exclurait sinon.
+!flutter/assets/logo_light.png
+!flutter/assets/logo_dark.png

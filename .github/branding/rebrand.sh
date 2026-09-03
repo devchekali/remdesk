@@ -42,13 +42,13 @@ must_replace "$rc" 'VALUE "ProductName", "RustDesk"' \
 
 # 4. Charte graphique Chekali Automation (bleu navy)
 must_replace "$common" '0xFF0071FF' \
-  's|Color(0xFF0071FF)|Color(0xFF1E4E8C)|' "couleur accent"
+  's|Color(0xFF0071FF)|Color(0xFF0B2447)|' "couleur accent"
 must_replace "$common" '0x770071FF' \
-  's|Color(0x770071FF)|Color(0x771E4E8C)|' "accent 50%"
+  's|Color(0x770071FF)|Color(0x770B2447)|' "accent 50%"
 must_replace "$common" '0xAA0071FF' \
-  's|Color(0xAA0071FF)|Color(0xAA1E4E8C)|' "accent 80%"
+  's|Color(0xAA0071FF)|Color(0xAA0B2447)|' "accent 80%"
 must_replace "$common" '0xFF2C8CFF' \
-  's|Color(0xFF2C8CFF)|Color(0xFF2C6CB5)|' "couleur bouton survol"
+  's|Color(0xFF2C8CFF)|Color(0xFF163460)|' "couleur bouton survol"
 # logo un peu plus grand dans le panneau (max 60 -> 88 px de haut)
 must_replace "$common" 'maxWidth: 300, maxHeight: 60' \
   's|maxWidth: 300, maxHeight: 60|maxWidth: 300, maxHeight: 88|' "taille logo"
