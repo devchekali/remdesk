@@ -86,6 +86,18 @@ print("REBRAND: lien site web insere")
 PYIN
 fi
 
-# 6. Verification finale
+# 6. Verrouiller le panneau Reseau : le champ ID/Relay Server ne doit
+# jamais etre modifiable depuis l'interface, une fois le serveur grave en dur.
+# L'option officielle "hide-server-settings" exige un fichier custom.txt signe
+# par la cle privee de RustDesk (leur service payant de "custom client") — on
+# ne la possede pas. On masque donc directement le menu dans le code source,
+# meme technique que pour les couleurs et le logo.
+settings_page="flutter/lib/desktop/pages/desktop_setting_page.dart"
+must_replace "$settings_page" \
+  "bind.mainGetBuildinOption(key: kOptionHideServerSetting) == 'Y';" \
+  "s|bind.mainGetBuildinOption(key: kOptionHideServerSetting) == 'Y';|true; // Chekali Automation : serveur et cle graves a la compilation, jamais modifiables depuis l'interface|" \
+  "verrouillage du panneau Reseau"
+
+# 7. Verification finale
 grep -q "$HOST" "$cfg" && grep -q "$KEY" "$cfg" || { echo "REBRAND: verification finale echouee"; exit 1; }
 echo "REBRAND: identite RemDesk + charte Chekali appliquee ($HOST, $SITE)"
