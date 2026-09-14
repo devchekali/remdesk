@@ -99,4 +99,18 @@ void main() {
     expect(
         await client.validate('tok-123'), AccountValidationResult.unreachable);
   });
+
+  test(
+      'validate() returns unreachable (not invalid) for a non-401 error '
+      'status, e.g. a 503 during a server restart', () async {
+    final client = AccountApiClient(
+      baseUrl: 'https://example.test',
+      client: MockClient((req) async {
+        return http.Response('Service Unavailable', 503);
+      }),
+    );
+
+    expect(
+        await client.validate('tok-123'), AccountValidationResult.unreachable);
+  });
 }

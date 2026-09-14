@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -165,6 +166,40 @@ void main() {
   });
 
   testWidgets(
+      'submitting login after a store factory that keeps throwing shows a '
+      'clear error instead of crashing on a null store', (tester) async {
+    final apiClient = AccountApiClient(
+      baseUrl: 'https://example.test',
+      client: MockClient((req) async {
+        // Would report success, but _submitLogin should never even get
+        // here: it must bail out on the still-null store first.
+        return http.Response(jsonEncode({'token': 'tok-123'}), 200);
+      }),
+    );
+    await tester.pumpWidget(MaterialApp(
+      home: AccountGate(
+        apiClient: apiClient,
+        storeFactory: () async => throw Exception('AppData unavailable'),
+        unlockedChild: _unlockedPlaceholder,
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('Se connecter'), findsOneWidget);
+
+    await tester.enterText(
+        find.widgetWithText(TextField, "Nom d'utilisateur"), 'alice');
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Mot de passe'), 'secret');
+    await tester.tap(find.text('Se connecter'));
+    await tester.pumpAndSettle();
+
+    // No crash: a clear error instead, still on the login form.
+    expect(find.text("Impossible d'accéder au stockage local, réessaie"),
+        findsOneWidget);
+    expect(find.text('Se connecter'), findsOneWidget);
+  });
+
+  testWidgets(
       'an account disabled (401) mid-session locks immediately with the '
       'deactivation message', (tester) async {
     await SessionStore(tempDir).write('good-token');
@@ -276,6 +311,145 @@ void main() {
     expect(
         find.text("Ton accès a été désactivé, contacte l'administrateur"),
         findsOneWidget);
+
+    await unmount(tester);
+  });
+
+  testWidgets(
+      'a non-401 error status (e.g. 503 during a server restart) does not '
+      'lock immediately - it goes through the 3-strike counter like an '
+      'unreachable server', (tester) async {
+    await SessionStore(tempDir).write('good-token');
+    var validateCalls = 0;
+    await pumpGate(tester, (req) async {
+      validateCalls++;
+      if (validateCalls == 1) {
+        return http.Response(jsonEncode({'valid': true}), 200);
+      }
+      return http.Response('Service Unavailable', 503);
+    });
+
+    expect(find.byWidget(_unlockedPlaceholder), findsOneWidget);
+
+    // Two 503s: still unlocked (not treated as "account disabled").
+    await tester.pump(const Duration(seconds: 12));
+    await tester.pumpAndSettle();
+    expect(find.byWidget(_unlockedPlaceholder), findsOneWidget);
+    expect(
+        find.text("Ton accès a été désactivé, contacte l'administrateur"),
+        findsNothing);
+
+    await tester.pump(const Duration(seconds: 12));
+    await tester.pumpAndSettle();
+    expect(find.byWidget(_unlockedPlaceholder), findsOneWidget);
+
+    // Third 503 in a row: locks, but with the connection-lost message, not
+    // the deactivation one - a transient server error is not an admin
+    // disabling the account.
+    await tester.pump(const Duration(seconds: 12));
+    await tester.pumpAndSettle();
+    expect(find.byWidget(_unlockedPlaceholder), findsNothing);
+    expect(find.text('Connexion au serveur perdue, réessaie plus tard'),
+        findsOneWidget);
+    expect(
+        find.text("Ton accès a été désactivé, contacte l'administrateur"),
+        findsNothing);
+
+    await unmount(tester);
+  });
+
+  testWidgets(
+      'submitting valid credentials from the locked screen ("Se reconnecter") '
+      'returns to the unlocked content', (tester) async {
+    await SessionStore(tempDir).write('good-token');
+    var validateCalls = 0;
+    await pumpGate(tester, (req) async {
+      if (req.url.path == '/api/login') {
+        return http.Response(jsonEncode({'token': 'fresh-token'}), 200);
+      }
+      validateCalls++;
+      if (validateCalls == 1) {
+        return http.Response(jsonEncode({'valid': true}), 200); // startup
+      }
+      return http.Response(jsonEncode({'valid': false}), 401); // tick: locks
+    });
+
+    expect(find.byWidget(_unlockedPlaceholder), findsOneWidget);
+
+    // Drive it into `locked`.
+    await tester.pump(const Duration(seconds: 12));
+    await tester.pumpAndSettle();
+    expect(find.text('Accès verrouillé'), findsOneWidget);
+    expect(find.text('Se reconnecter'), findsOneWidget);
+    expect(find.byWidget(_unlockedPlaceholder), findsNothing);
+
+    // Log back in from the locked screen.
+    await tester.enterText(
+        find.widgetWithText(TextField, "Nom d'utilisateur"), 'alice');
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Mot de passe'), 'secret');
+    await tester.tap(find.text('Se reconnecter'));
+    await tester.pumpAndSettle();
+
+    expect(find.byWidget(_unlockedPlaceholder), findsOneWidget);
+    expect(find.text('Accès verrouillé'), findsNothing);
+    expect(await SessionStore(tempDir).read(), 'fresh-token');
+
+    await unmount(tester);
+  });
+
+  testWidgets(
+      'the re-entrancy guard prevents a second tick from starting a new '
+      'validate() call while the previous one is still in flight, so ticks '
+      "can't double-count a single outage", (tester) async {
+    await SessionStore(tempDir).write('good-token');
+    var validateCalls = 0;
+    final staleTickCompleter = Completer<http.Response>();
+    await pumpGate(tester, (req) async {
+      validateCalls++;
+      if (validateCalls == 1) {
+        return http.Response(jsonEncode({'valid': true}), 200); // startup
+      }
+      if (validateCalls == 2) {
+        // The first revalidation tick: deliberately never resolves until
+        // the test completes it below, simulating a slow/hanging request.
+        return staleTickCompleter.future;
+      }
+      // Should never be reached: a second tick must not be able to start
+      // a new call while the first is still pending.
+      return http.Response(jsonEncode({'valid': true}), 200);
+    });
+
+    expect(find.byWidget(_unlockedPlaceholder), findsOneWidget);
+
+    // Tick 1 fires, calls validate() (call #2), and is now stuck in flight.
+    await tester.pump(const Duration(seconds: 12));
+    await tester.pump(); // let the pending call actually start
+    expect(validateCalls, 2);
+    expect(find.byWidget(_unlockedPlaceholder), findsOneWidget);
+
+    // Tick 2 fires 12s later while call #2 is still unresolved. If the
+    // re-entrancy guard didn't exist, this would start a 3rd validate()
+    // call right now.
+    await tester.pump(const Duration(seconds: 12));
+    await tester.pump();
+    expect(validateCalls, 2,
+        reason: 'a second tick must not call validate() while the first '
+            'tick\'s call is still in flight');
+    expect(find.byWidget(_unlockedPlaceholder), findsOneWidget,
+        reason: 'still unlocked - the in-flight call has not resolved yet');
+
+    // Now resolve the stale call: the account turns out to be disabled.
+    staleTickCompleter.complete(http.Response(jsonEncode({'valid': false}), 401));
+    await tester.pumpAndSettle();
+
+    expect(find.byWidget(_unlockedPlaceholder), findsNothing);
+    expect(
+        find.text("Ton accès a été désactivé, contacte l'administrateur"),
+        findsOneWidget);
+    // Exactly one validate() call happened for the two ticks that fired
+    // while the guard was engaged - proof ticks did not overlap/double-fire.
+    expect(validateCalls, 2);
 
     await unmount(tester);
   });

@@ -68,9 +68,14 @@ class AccountApiClient {
         Uri.parse('$baseUrl/api/session/validate'),
         headers: {'Authorization': 'Bearer $token'},
       ).timeout(const Duration(seconds: 10));
-      return res.statusCode == 200
-          ? AccountValidationResult.valid
-          : AccountValidationResult.invalid;
+      // The server contract only defines 200 (valid) and 401 (invalid).
+      // Anything else (500/502/503 during a restart or deploy, etc.) is
+      // not proof the account was deactivated - treat it the same as an
+      // unreachable server so it goes through the 3-strike counter
+      // instead of locking (and wiping the session) immediately.
+      if (res.statusCode == 200) return AccountValidationResult.valid;
+      if (res.statusCode == 401) return AccountValidationResult.invalid;
+      return AccountValidationResult.unreachable;
     } catch (_) {
       return AccountValidationResult.unreachable;
     }

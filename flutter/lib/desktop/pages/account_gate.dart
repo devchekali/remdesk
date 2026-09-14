@@ -177,6 +177,24 @@ class _AccountGateState extends State<AccountGate> {
   }
 
   Future<void> _submitLogin() async {
+    // _init()'s catch-all fallback can leave _store null (e.g. the store
+    // factory threw on startup). Retry creating it before attempting a
+    // login that we wouldn't be able to persist - otherwise a successful
+    // login here would crash on `_store!.write(...)` below.
+    if (_store == null) {
+      try {
+        _store = await (widget.storeFactory ?? SessionStore.create)();
+      } catch (_) {
+        _store = null;
+      }
+      if (_store == null) {
+        if (!mounted) return;
+        setState(() {
+          _message = "Impossible d'accéder au stockage local, réessaie";
+        });
+        return;
+      }
+    }
     setState(() {
       _busy = true;
       _message = null;
