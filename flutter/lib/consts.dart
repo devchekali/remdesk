@@ -10,6 +10,7 @@ const int kAllVirtualDisplay = -1;
 const double kDesktopRemoteTabBarHeight = 28.0;
 const int kInvalidWindowId = -1;
 const int kMainWindowId = 0;
+const String kAccountApiBaseUrl = 'https://srv.remdesk.tech:3001';
 
 const kAllDisplayValue = -1;
 
