@@ -63,7 +63,7 @@ void main() {
     expect(result.error, 'Impossible de joindre le serveur, réessaie plus tard');
   });
 
-  test('validate() returns true for a 200 response', () async {
+  test('validate() returns valid for a 200 response', () async {
     final client = AccountApiClient(
       baseUrl: 'https://example.test',
       client: MockClient((req) async {
@@ -73,10 +73,10 @@ void main() {
       }),
     );
 
-    expect(await client.validate('tok-123'), true);
+    expect(await client.validate('tok-123'), AccountValidationResult.valid);
   });
 
-  test('validate() returns false for a 401 response', () async {
+  test('validate() returns invalid for a 401 response', () async {
     final client = AccountApiClient(
       baseUrl: 'https://example.test',
       client: MockClient((req) async {
@@ -84,10 +84,11 @@ void main() {
       }),
     );
 
-    expect(await client.validate('tok-123'), false);
+    expect(await client.validate('tok-123'), AccountValidationResult.invalid);
   });
 
-  test('validate() returns false when the server is unreachable', () async {
+  test('validate() returns unreachable when the server cannot be reached',
+      () async {
     final client = AccountApiClient(
       baseUrl: 'https://example.test',
       client: MockClient((req) async {
@@ -95,6 +96,7 @@ void main() {
       }),
     );
 
-    expect(await client.validate('tok-123'), false);
+    expect(
+        await client.validate('tok-123'), AccountValidationResult.unreachable);
   });
 }

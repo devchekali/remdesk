@@ -2,6 +2,14 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+/// Outcome of validating a stored session token against the server.
+///
+/// Kept distinct from a plain bool so callers can tell an explicitly
+/// rejected/disabled account (`invalid`) apart from a server that
+/// could not be reached at all (`unreachable`) — the two call for very
+/// different UX (immediate lock vs. a few retries before locking).
+enum AccountValidationResult { valid, invalid, unreachable }
+
 class AccountLoginResult {
   final String? token;
   final String? error;
@@ -54,15 +62,17 @@ class AccountApiClient {
     }
   }
 
-  Future<bool> validate(String token) async {
+  Future<AccountValidationResult> validate(String token) async {
     try {
       final res = await _client.get(
         Uri.parse('$baseUrl/api/session/validate'),
         headers: {'Authorization': 'Bearer $token'},
       ).timeout(const Duration(seconds: 10));
-      return res.statusCode == 200;
+      return res.statusCode == 200
+          ? AccountValidationResult.valid
+          : AccountValidationResult.invalid;
     } catch (_) {
-      return false;
+      return AccountValidationResult.unreachable;
     }
   }
 }
