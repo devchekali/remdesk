@@ -15,6 +15,32 @@ import 'package:flutter_hbb/models/session_store.dart';
 // `unlockedChild` precisely so tests can substitute this.
 const _unlockedPlaceholder = Text('UNLOCKED_PLACEHOLDER');
 
+// A SessionStore whose read() can be made to hang on demand, independent of
+// any timeout - used to force two revalidation ticks to genuinely overlap
+// (see the re-entrancy guard test below for why the HTTP call itself can't
+// be used for that).
+class _ControllableSessionStore extends SessionStore {
+  _ControllableSessionStore(Directory dir) : super(dir);
+
+  int readCalls = 0;
+  Completer<String?>? _hangingRead;
+
+  void hangNextRead() => _hangingRead = Completer<String?>();
+
+  void resolveHangingRead(String? token) {
+    _hangingRead?.complete(token);
+    _hangingRead = null;
+  }
+
+  @override
+  Future<String?> read() async {
+    readCalls++;
+    final hanging = _hangingRead;
+    if (hanging != null) return hanging.future;
+    return super.read();
+  }
+}
+
 void main() {
   late Directory tempDir;
 
@@ -400,56 +426,70 @@ void main() {
 
   testWidgets(
       'the re-entrancy guard prevents a second tick from starting a new '
-      'validate() call while the previous one is still in flight, so ticks '
-      "can't double-count a single outage", (tester) async {
-    await SessionStore(tempDir).write('good-token');
+      'store read/validate() while the previous tick is still in flight, so '
+      "ticks can't double-count a single outage", (tester) async {
+    // AccountApiClient.validate() has its own 10s .timeout(), which is
+    // shorter than the 12s tick period - so stalling the HTTP call itself
+    // can't be used to force two ticks to overlap (the first tick's call
+    // would simply time out on its own before the second tick fires). The
+    // step that can be made to hang for as long as the test wants,
+    // independent of any timeout, is SessionStore.read() - so that's what
+    // this test stalls.
+    final store = _ControllableSessionStore(tempDir);
+    await store.write('good-token');
+
     var validateCalls = 0;
-    final staleTickCompleter = Completer<http.Response>();
-    await pumpGate(tester, (req) async {
-      validateCalls++;
-      if (validateCalls == 1) {
-        return http.Response(jsonEncode({'valid': true}), 200); // startup
-      }
-      if (validateCalls == 2) {
-        // The first revalidation tick: deliberately never resolves until
-        // the test completes it below, simulating a slow/hanging request.
-        return staleTickCompleter.future;
-      }
-      // Should never be reached: a second tick must not be able to start
-      // a new call while the first is still pending.
-      return http.Response(jsonEncode({'valid': true}), 200);
-    });
+    final apiClient = AccountApiClient(
+      baseUrl: 'https://example.test',
+      client: MockClient((req) async {
+        validateCalls++;
+        return http.Response(jsonEncode({'valid': true}), 200);
+      }),
+    );
 
-    expect(find.byWidget(_unlockedPlaceholder), findsOneWidget);
-
-    // Tick 1 fires, calls validate() (call #2), and is now stuck in flight.
-    await tester.pump(const Duration(seconds: 12));
-    await tester.pump(); // let the pending call actually start
-    expect(validateCalls, 2);
-    expect(find.byWidget(_unlockedPlaceholder), findsOneWidget);
-
-    // Tick 2 fires 12s later while call #2 is still unresolved. If the
-    // re-entrancy guard didn't exist, this would start a 3rd validate()
-    // call right now.
-    await tester.pump(const Duration(seconds: 12));
-    await tester.pump();
-    expect(validateCalls, 2,
-        reason: 'a second tick must not call validate() while the first '
-            'tick\'s call is still in flight');
-    expect(find.byWidget(_unlockedPlaceholder), findsOneWidget,
-        reason: 'still unlocked - the in-flight call has not resolved yet');
-
-    // Now resolve the stale call: the account turns out to be disabled.
-    staleTickCompleter.complete(http.Response(jsonEncode({'valid': false}), 401));
+    await tester.pumpWidget(MaterialApp(
+      home: AccountGate(
+        apiClient: apiClient,
+        storeFactory: () async => store,
+        unlockedChild: _unlockedPlaceholder,
+      ),
+    ));
     await tester.pumpAndSettle();
 
-    expect(find.byWidget(_unlockedPlaceholder), findsNothing);
-    expect(
-        find.text("Ton accès a été désactivé, contacte l'administrateur"),
-        findsOneWidget);
-    // Exactly one validate() call happened for the two ticks that fired
-    // while the guard was engaged - proof ticks did not overlap/double-fire.
+    expect(find.byWidget(_unlockedPlaceholder), findsOneWidget);
+    expect(store.readCalls, 1, reason: 'startup read');
+    expect(validateCalls, 1, reason: 'startup validate()');
+
+    // Make the *next* store.read() hang until the test resolves it.
+    store.hangNextRead();
+
+    // Tick 1 fires: _revalidate() calls store.read() (call #2), which now
+    // hangs before it even gets to call validate().
+    await tester.pump(const Duration(seconds: 12));
+    await tester.pump();
+    expect(store.readCalls, 2);
+    expect(validateCalls, 1,
+        reason: 'tick 1 is stuck on store.read() - it never reached '
+            'validate()');
+
+    // Tick 2 fires 12s later, while tick 1 is still stuck on its read().
+    // Without the re-entrancy guard this would call store.read() again.
+    await tester.pump(const Duration(seconds: 12));
+    await tester.pump();
+    expect(store.readCalls, 2,
+        reason: 'a second tick must not call store.read() while the first '
+            "tick's read() is still in flight");
+    expect(find.byWidget(_unlockedPlaceholder), findsOneWidget,
+        reason: 'still unlocked - tick 1 has not resolved yet');
+
+    // Let tick 1's read() resolve; it proceeds to validate() normally and
+    // the app stays unlocked, having made exactly one validate() call for
+    // the two ticks that fired while the guard was engaged.
+    store.resolveHangingRead('good-token');
+    await tester.pumpAndSettle();
+
     expect(validateCalls, 2);
+    expect(find.byWidget(_unlockedPlaceholder), findsOneWidget);
 
     await unmount(tester);
   });
