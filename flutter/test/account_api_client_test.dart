@@ -50,6 +50,22 @@ void main() {
     expect(result.tooManyAttempts, true);
   });
 
+  test(
+      'login() reports a server error (not wrong credentials) on a non-401/429 '
+      'status, e.g. a 500 during a server restart', () async {
+    final client = AccountApiClient(
+      baseUrl: 'https://example.test',
+      client: MockClient((req) async {
+        return http.Response('Internal Server Error', 500);
+      }),
+    );
+
+    final result = await client.login('alice', 'secret');
+    expect(result.isOk, false);
+    expect(result.error, 'Le serveur a répondu une erreur, réessaie plus tard');
+    expect(result.tooManyAttempts, false);
+  });
+
   test('login() reports unreachable server on network failure', () async {
     final client = AccountApiClient(
       baseUrl: 'https://example.test',

@@ -52,8 +52,15 @@ class AccountApiClient {
           tooManyAttempts: true,
         );
       }
+      if (res.statusCode == 401) {
+        return AccountLoginResult.error(
+          "Nom d'utilisateur ou mot de passe incorrect",
+        );
+      }
+      // Any other non-200/429 status (500/502/503 during a restart or deploy,
+      // etc.) is a server-side error, not a wrong-credentials problem.
       return AccountLoginResult.error(
-        "Nom d'utilisateur ou mot de passe incorrect",
+        'Le serveur a répondu une erreur, réessaie plus tard',
       );
     } catch (_) {
       return AccountLoginResult.error(

@@ -204,10 +204,17 @@ class _AccountGateState extends State<AccountGate> {
     if (!mounted) return;
     setState(() => _busy = false);
     if (result.isOk) {
-      await _store!.write(result.token!);
-      _passwordController.clear();
-      if (!mounted) return;
-      _unlock();
+      try {
+        await _store!.write(result.token!);
+        _passwordController.clear();
+        if (!mounted) return;
+        _unlock();
+      } catch (_) {
+        if (!mounted) return;
+        setState(() {
+          _message = "Impossible d'accéder au stockage local, réessaie";
+        });
+      }
     } else {
       setState(() => _message = result.error);
     }
